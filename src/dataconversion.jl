@@ -83,24 +83,6 @@ function getdesoraster()
     # return swe, colors, dfdeso
 end
 
-function getcompanydata()
-    dfcompany = GDF.read("$DATAFOLDER/Elnätsområden Therese/omraden.shp")
-    dfcompany.bolag[276] = "Hedemorahyttorna"
-    dfcompany.snitt = parse.(Int, dfcompany.snitt)
-    disallowmissing!(dfcompany)
-    return dfcompany
-end
-
-"""Rasterize Swedish power company areas using center points of our 1 km grid squares.
-    Return (company, dfcompany), where company is a Raster and dfcompany a GeoDataFrame of company areas."""
-function getcompanyraster()
-    # Shapefile of Swedish power companies (purchased by Therese)
-    # Is this the source?   https://www.natomraden.se/
-    dfcompany = getcompanydata()
-    company = rasterizeSWEREF99(dfcompany, :geometry)
-    return company, dfcompany
-end
-
 """Rasterize a SWEREF99 GeoDataFrame using center points of our 1 km grid squares.
     Return (swe, dfdeso), where swe is a Raster and dfdeso a GeoDataFrame of DeSO areas."""
 function rasterizeSWEREF99(gdf, column)
@@ -124,57 +106,6 @@ function rasterize_geovector(gv, xlim, ylim, interval, crs; T=UInt32, missingval
         rasterize!(raster, g, fill=i)
     end
     return raster
-end
-
-"Area of the intersection of two polygons"
-intersectedarea(p1,p2) = GI.intersects(p1,p2) ? GI.area(GI.intersection(p1,p2)) : 0.0
-
-"Calculate the intersected area matrix of all 1 km cells and DeSO areas (9 minute run time)."
-cell_deso_intersection(dfpop, dfdeso, T=Float64) = T[intersectedarea(pop, deso) for pop in dfpop.geometry, deso in dfdeso.geom]
-
-"Save indices and values of nonzero elements as a CSV file (only 0.2% of elements are > 0)."
-function save_intersection_matrix()
-    dfpop, dfdeso = merge_pop_coords_deso()
-    sort!(dfdeso, :deso)
-    areamat = cell_deso_intersection(dfpop, dfdeso)
-    areamat ./= sum(areamat, dims=2)    # normalize so cell row sum = 1 (ensures even border cells belong 100% to a DeSO)
-    ii = findall(areamat .> 0)
-    df = DataFrame(:row => getindex.(ii,1), :col => getindex.(ii,2), :val => areamat[ii])
-    CSV.write("$DATAFOLDER/intersectionmatrix.csv", df)
-end
-
-"Read back the sparse matrix saved by `save_intersection_matrix`."
-function read_intersection_matrix(T=Float64)
-    df = CSV.read("$DATAFOLDER/intersectionmatrix.csv", DataFrame)
-    areamat = zeros(T, 114799, 5984)
-    ii = CartesianIndex.(df.row, df.col)
-    areamat[ii] .= df.val
-    return areamat
-end
-
-# getcoords(point) = (GI.getcoord(point,1), GI.getcoord(point,2))
-# centercoords(geometry) = getcoords(GI.getpoint(GI.getgeom(geometry, 1), 1)) .+ 500
-# centerpoint(geometry) = AG.createpoint(centercoords(geometry))
-# centerintersects(p1, p2) = GI.intersects(centerpoint(p1), p2)
-
-function write_cellcompanydata(outputdir="$DATAFOLDER/output")
-    dfpop, dfdeso = merge_pop_coords_deso()
-    println("Identifying power company for each cell...")
-    dfcellcompany = getcellcompanydata(dfpop)
-    
-    dfcells = hcat(dfpop[!, [1,3,4]], dfcellcompany[!, 2:end])
-    rename!(dfcells, Dict("snitt" => "elomrade"))
-    mkpath(outputdir)
-    shapefilename = "$outputdir/bolagsinfo_celler.shp"
-    println("Writing Shapefile to $shapefilename...")
-    GDF.write(shapefilename, dfcells; layer_name="celler", crs=EPSG(3006))
-
-    dfcells = hcat(dfpop[!, [3,4,6,7]], dfcellcompany[!, 2:end])
-    rename!(dfcells, Dict("snitt" => "elomrade"))
-    csvfilename = "$outputdir/bolagsinfo_celler.csv"
-    println("Writing CSV file to $csvfilename...")
-    CSV.write(csvfilename, dfcells)
-    nothing
 end
 
 """aggregate_extents(gv)
@@ -256,29 +187,14 @@ function readdesostats(year=2021)
     return cars, persons_per_house, persons_per_contract, households, dwellings
 end
 
-"Identify power company for each cell and return a large DataFrame with company data."
-function getcellcompanydata(dfpop)
-    dfcompany = getcompanydata()
-    ncells = size(dfpop,1)
-    companyindex = zeros(Int, ncells)
-    progressbar = Progress(ncells, 1)
-    Threads.@threads for i = 1:ncells
-        companyindex[i] = argmax(intersectedarea(dfpop.geometry[i], grid) for grid in dfcompany.geometry)
-        next!(progressbar)
-    end
-    return dfcompany[companyindex, :]
-end
-
 "Read and merge all DeSO level statistics together into a single DataFrame."
 function buildDESOdata()
     println("Merging cells with DeSO areas...")
     dfpop, dfdeso = merge_pop_coords_deso()
     println("Inserting gridarea data...")
-    dfcellcompany = getcellcompanydata(dfpop)
-    dfpop.gridarea .= dfcellcompany.snitt
-    dfpop.cpy .= dfcellcompany.omr
-    dfpop.company .= dfcellcompany.bolag
-    select!(dfpop, [:cellid, :deso, :gridarea, :cpy, :company, :pop])
+    dfgridareas = CSV.read("$DATAFOLDER/gridareas_cells.csv", DataFrame)
+    dfpop.gridarea .= dfgridareas.gridarea  # ok because cellid are in the same order
+    select!(dfpop, [:cellid, :deso, :gridarea, :pop])
     select!(dfdeso, [:deso, :kommunnamn, :lannamn, :area_km2])
     sort!(dfdeso, :deso)
 
@@ -339,28 +255,12 @@ function buildDESOdata()
     # n_apts1 = dfdeso.fracAP.*(dfdeso.apts + dfdeso.houses)
     # n_apts2 = dfdeso.fracAP_pw.*dfdeso.pop./dfdeso.popperapt      # identical except for NaNs
 
-    println("There are also DeSO stats for population sliced by age, gender, birthplace, etc.")
-    println("There are also DeSO stats for income and type of work (sliced by sector).")
-    println("\nShould we use fracAP_pw or fracAP_pw2?")
-
-    # colnames = [:deso, :kommunnamn, :lannamn, :cars, :pop_in_houses, :pop_in_apts]
-    # newnames = [:deso, :munic, :region, :desocars, :desopop_in_houses, :desopop_in_apts]
-    # df = innerjoin(dfpop, dfdeso[!, colnames], on=:deso)
-    # rename!(df, Dict(c => n for (c,n) in zip(colnames, newnames)))
-
     df = innerjoin(dfpop, dfdeso[!, [:deso, :kommunnamn, :lannamn, :popperapt, :popperhouse]], on=:deso)
     rename!(df, Dict(:kommunnamn => :munic, :lannamn => :region))
 
-    # Adjust DeSO level stats for cells with multiple DeSOs (maybe fails due to type conversions)
-    # areamat = read_intersection_matrix()
-    # df.pop .= areamat * dfdeso.pop / 1e6
-    # df.cars .= areamat * dfdeso.cars / 1e6
-    # df.carspercapita .= areamat * dfdeso.carspercapita / 1e6
-    # df.fracAP_pw .= areamat * dfdeso.fracAP_pw / 1e6
-
     # THESE COMBINED CELL STATS ARE APPROXIMATE ONLY!! (Because they assume each cell is allocated to a single DeSO)
     # calculate and insert column :area_ncells in dfdeso
-    gdf = groupby(df, :deso, sort=true)
+    gdf = DataFrames.groupby(df, :deso, sort=true)
     gdf_rows = DataFrames.combine(gdf, nrow => :area_ncells, :pop => sum)
     leftjoin!(dfdeso, gdf_rows, on=:deso)
     replace!(dfdeso.area_ncells, missing => 0)
@@ -441,50 +341,8 @@ carformula(log_pd) = log_pd < 0 ? carpoly(0.0) : carpoly(log_pd)
 
 function savegeodata_DESO()
     dfgeo, dfdeso = buildDESOdata()
-    println("Inserting borehole data...")
-    insert_boreholes!(dfgeo)
-    println("Inserting district heating data...")
-    insert_district_heating_areas!(dfgeo)
     CSV.write("$DATAFOLDER/geodata_DESO.csv", dfgeo)
 end
-
-function getverk()
-    # Verksamhetsområden
-    # Statistiken visar antal anställda, antal arbetsställen, branscher och arealer för verksamhetsområden. Ett verksamhetsområde kan bestå antingen av en koncentration av flera arbetsställen, som tillsammans bildar ett geografiskt avgränsat område, eller ett område som karaktäriseras av storskalig och industriellt präglad markanvändning och har minst ett arbetsställe. Ett verksamhetsområde är minst 3 hektar stort. Exempel på verksamhetsområden är flygplatser, gruvor och täkter, områden med industri, företagsparker och logistik eller områden med högskolor, universitet och vårdinrättningar.
-    # https://www.scb.se/vara-tjanster/oppna-data/oppna-geodata/verksamhetsomraden/
-    # ogrinfo WFS:"http://geodata.scb.se/geoserver/stat/ows?service=WFS&version=1.0.0&request=GetFeature&typeName=stat%3AVerksamhetsomraden.2015&outputFormat=SHAPE-ZIP&format_options=charset:UTF-8"
-    # ogr2ogr -f "ESRI Shapefile" -lco ENCODING=UTF-8 Verksamhetsomraden.shp WFS:"http://geodata.scb.se/geoserver/stat/ows?service=WFS&version=1.0.0&request=GetFeature&typeName=stat%3AVerksamhetsomraden.2015&outputFormat=SHAPE-ZIP&format_options=charset:UTF-8"
-    df = Shapefile.Table("$DATAFOLDER/Verksamhetsomraden.shp") |> DataFrame
-end
-
-# Geodataportalen
-# https://www.geodata.se/geodataportalen/srv/swe/catalog.search
-#     SE.PF Energiproduktionsanläggningar (NACE D) 
-#     SE.PF Tillverkningsindustrier (NACE C) 
-
-function testdeso(df)
-    desos = unique(df.deso)
-    totbad = 0
-    for d in desos
-        ii = (df.deso .== d)
-        munis = df.muni_id[ii]
-        main = mostfrequentelement(munis)
-        totbad += sum(munis .!= main)
-    end
-    totbad
-end
-
-function unionall(geovector)
-    len = length(geovector)
-    len <= 1 && return geovector
-    geom = geovector[1]
-    for g in geovector[2:end]
-        geom = GI.union(geom, g)
-    end
-    return geom
-end
-
-uniqueindexes(x) = unique(z -> x[z], 1:length(x))
 
 function mostfrequentelement(x)
     d = Dict{eltype(x), Int}()
@@ -492,29 +350,6 @@ function mostfrequentelement(x)
         d[e] = get(d, e, 0) + 1
     end
     return argmax(d)
-end
-
-"Get indexes of the n smallest elements of A"
-function argsmallest(A::AbstractArray{T,N}, n::Integer) where {T,N}
-    # should someone ask more elements than array size, just sort array
-    if n>= length(vec(A))
-      ind=collect(1:length(vec(A)))
-      ind=sortperm(A[ind])
-      return CartesianIndices(A)[ind]
-    end
-    # otherwise 
-    ind=collect(1:n)
-    mymax=maximum(A[ind])
-    for j=n+1:length(vec(A))
-    if A[j]<mymax
-     getout=findmax(A[ind])[2]
-     ind[getout]=j
-     mymax=maximum(A[ind])
-    end
-    end
-    ind=ind[sortperm(A[ind])]
-    
-    return CartesianIndices(A)[ind]
 end
 
 function openmap(ruta::Int; bing=false)
@@ -599,94 +434,6 @@ function saveHDF5(x, filename="coincidence", varname="coincidence")
     end
 end
 
-# Convert the matlab file to Float32 and save as HDF5 using ZSTD compression.
-# Saving as Float32 saves half the disk space (and load/save time), permuting dimensions
-# so time steps are in the first dimension improves compression which halves disk space again.
-function convert_coincidences()
-    folder = "D:/Marre/Filer_coincidence_till_niclas"
-    dir = readdir(folder)
-    targetfolder = "$DATAFOLDER"
-    for (i, matfile) in enumerate(dir)
-        println("Reading $matfile (file $i of $(length(dir)))...")
-        @time x = loadMAT("$folder/$matfile")
-        filename, ext = splitext(matfile)
-        outfile = "$targetfolder/$(lowercasefirst(filename))"
-        println("    ...converting to Float32 and saving to $outfile.h5...")
-        @time saveHDF5(Float32.(permutedims(x, (3,2,1))), outfile)
-    end
-    nothing
-end
-
-function convert_demand()
-    vars = matread("C:/Griddata/ResidentialLP.mat")
-    h5open("C:/Griddata/residentialdemand.h5", "w") do file
-        x = permutedims(vars["HHLoadProfile"])
-        file["/HHLoadProfile", chunk=HDF5.heuristic_chunk(x), filters=ZstdFilter()] = x
-        x = permutedims(vars["APTLoadProfile"])
-        file["/APTLoadProfile", chunk=HDF5.heuristic_chunk(x), filters=ZstdFilter()] = x
-    end
-end
-
-function convert_coincidence_MAT_Float32()
-    @time x = loadMAT("coincidence50100kWh")
-    @time saveMAT_compressed(Float32.(x), "coincidence50_float32")
-    x = nothing
-    GC.gc()
-    # @time x = loadMAT("CoincidenceLarge100kWh", "coincidence_ED017_CR69")
-    # @time saveHDF5(Float32.(permutedims(x, (3,2,1))), "coincidence_full");
-    @time x = loadMAT("CoincidenceLarge100kWh", "coincidence_ED017_CR69")
-    @time saveMAT_compressed(Float32.(x), "coincidence100_float32")
-    nothing
-end
-
-function loadMAT(filename, varname="coincidence")
-    # coincidence50100kWh, CoincidenceLarge100kWh, coincidence_compressed, coincidence_Float32
-    matopen(filename) do file
-        vars = keys(file)
-        if !(varname in vars)
-            varname = first(vars)
-        end
-        read(file, varname)
-    end
-end
-
-function saveMAT_compressed(x, filename="coincidence_compressed", varname="coincidence")
-    matopen("$DATAFOLDER/$filename.mat", "w"; compress=true) do file
-        write(file, varname, x)
-    end
-end
-
-function saveMAT_float32(x)
-    matopen("$DATAFOLDER/coincidence_float32.mat", "w"; compress=true) do file
-        write(file, "coincidence", Float32.(x))
-    end
-end
-
-function saveHDF5_c4(x, filename="coincidence_c4", varname="coincidence")
-    h5open("$DATAFOLDER/$filename.h5", "w") do file
-        file["/$varname", compress=4] = x
-        # file["/coincidence", shuffle=(), deflate=3] = x
-        # g = create_group(file, "mygroup")
-        # dset = create_dataset(g, "myvector", Float64, (10,))
-        # write(dset,rand(10))
-    end
-end
-
-# b = matread("$DATAFOLDER/BRDChargingAnnualHomeED17CR69100kWh.mat")["BRDChargingAnnualHomeED17CR69"]
-# @time saveHDF5(Float32.(b), "BRD_chargedata", "chargedata");
-
-function EV_coincidence_maker()
-    Random.seed!(23)
-    charge = loadHDF5("BRD_chargedata", "chargedata")   # (52704, 429)
-    coincidence = zeros(Float32, 31, 100, 52704)
-    average_charge = zeros(Float32, 52704, 1000)
-    for k = 9:31
-        println(k)
-        coincidence[k, :, :] = get_charge_samples!(k, average_charge, charge)'
-    end
-    return coincidence
-end
-
 function get_charge_samples!(k, average_charge, charge)
     for j = 1:1000
         chargingcars = sample(1:429, k, replace=false)      # random sample, select k of the 429 cars for charging
@@ -768,59 +515,4 @@ function add_shifted_profiles(profilemat; periods, weeks)
         new_profilemat[:, i] .= profilemat[indexes, profile]
     end
     return new_profilemat
-end
-
-function aggregate_borehole_files()
-    # https://www.sgu.se/produkter-och-tjanster/geologiska-data/oppna-data/grundvatten-oppna-data/brunnar/
-    # https://resource.sgu.se/dokument/produkter/oppnadata/brunnar-oppnadata-beskrivning.pdf
-    # https://apps.sgu.se/kartvisare/kartvisare-brunnar.html
-    folder = "C:/Griddata/Brunnar"
-    dir = readdir(folder)
-    df = CSV.read("$folder/$(dir[1])", DataFrame)
-    for file in dir[2:end]
-        println("Reading $file...")
-        dfnew = CSV.read("$folder/$file", DataFrame)
-        df = [df; dfnew]
-    end
-    badrows = ismissing.(df.n .+ df.e) .|| ismissing.(df.anvandning)
-    df = df[.!badrows, [:id, :n, :e, :kommunkod, :lagesnoggrannhet, :fastighet, :ort, :totaldjup, :anvandning]]
-    df.n .= Int.(df.n)
-    df.e .= Int.(df.e)
-    df.cellid .= [string(Int(floor(e, digits=-3))) * string(Int(floor(n, digits=-3))) for (n,e) in zip(df.n, df.e)]
-    df.energibrunn .= (df.anvandning .== "ENERGIBRUNN (VÄRME OCH/ELLER KYLA)")
-    CSV.write("C:/Griddata/boreholes.csv", df)
-end
-
-function insert_boreholes!(dfgeo)
-    df = CSV.read("C:/Griddata/boreholes.csv", DataFrame)
-    df = df[df.energibrunn, :]
-    counts = countmap(df.cellid)
-    dfgeo.energibrunnar .= get.(Ref(counts), dfgeo.cellid, 0)
-    nothing
-end
-
-function get_district_heating_areas()
-    # https://www.euroheat.org/resource/paneuropean-thermal-atlas-5.html
-    # https://s-eenergies-open-data-euf.hub.arcgis.com/search?categories=d5.1
-    # https://s-eenergies-open-data-euf.hub.arcgis.com/maps/b62b8ad79f0e4ae38f032ad6aadb91a0
-    # https://www.seenergies.eu/wp-content/uploads/sites/25/2020/04/sEEnergies-WP5_D5.1-Excess_heat_potentials_of_industrial_sites_in_Europe.pdf
-    shapefile = "C:/Griddata/D5_1_District_Heating_Areas/D5_1_District_Heating_Areas.shp"
-    # df = Shapefile.Table(shapefile) |> DataFrame
-    gdf = GDF.read(shapefile)
-    gdf_swe = gdf[gdf.CNTR_CODE .== "SE", :]
-    gdf_swe.geometry .= GDF.reproject(gdf_swe.geometry, EPSG(4326), EPSG(3006), order=:trad)
-    dh_swe = rasterizeSWEREF99(gdf_swe, :geometry)
-    return gdf_swe, dh_swe
-end
-
-function insert_district_heating_areas!(dfgeo)
-    gdf_swe, dh_swe = get_district_heating_areas()
-    cellids = dfgeo.cellid
-    ndx_DH = similar(cellids)
-    for (i, id) in enumerate(cellids)
-        x, y = decode_coords(id)
-        ndx_DH[i] = dh_swe[X(At(x)),Y(At(y))]
-    end
-    dfgeo.index_DHarea .= ndx_DH
-    nothing
 end
