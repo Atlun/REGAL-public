@@ -4,7 +4,7 @@ import GeoFormatTypes as GFT
 GI = Shapefile.GeoInterface
 AG = ArchGDAL
 
-export readgeodata, savegeodata_DESO, write_cellcompanydata, loadHDF5, GDF, GFT, GI, AG, CSV, Shapefile, Rasters, mean, openmap
+export readgeodata, setup, loadHDF5, GDF, GFT, GI, AG, CSV, Shapefile, Rasters, mean, openmap
 
 "Read 1 km population data into a GeoDataFrame."
 function getpop()
@@ -339,6 +339,17 @@ fracAPformula_pw(log_pd) = log_pd < 1.7 ? 0 : logistic(log_pd, 2.75, 2.75)
 carpoly(x) = Polynomial(0.6696887920332156 - 0.02658599714105161*x - 0.01884416753214118*x^2)
 carformula(log_pd) = log_pd < 0 ? carpoly(0.0) : carpoly(log_pd)
 
+function setup(scenarios)
+    if scenarios == "full"
+        save_profile_aggregations()
+    elseif scenarios == "minimal"
+        save_profile_aggregations(["BaseDirect"])
+    else
+        error("Please choose either 'full' or 'minimal'.")
+    end
+    savegeodata_DESO()
+end
+
 function savegeodata_DESO()
     dfgeo, dfdeso = buildDESOdata()
     CSV.write("$DATAFOLDER/geodata_DESO.csv", dfgeo)
@@ -443,7 +454,7 @@ function get_charge_samples!(k, average_charge, charge)
     return average_charge[:, ndx[1:10:1000]]                # choose every 10th sample, return avg charge for all 10 minute periods
 end
 
-function save_profile_aggregations(scenarios=["BaseDirect", "BaseSmart", "BaseV2G", "BaseMix"]; n=100)
+function save_profile_aggregations(scenarios=["BaseDirect", "BaseSmart", "BaseV2G"]; n=100)
     # Runtime 22 + 17 + 51 seconds on laptop
     (; profilenumbers) = getparams(2, 3, false)
 
@@ -452,11 +463,6 @@ function save_profile_aggregations(scenarios=["BaseDirect", "BaseSmart", "BaseV2
         for region in regions
             if scenarioEV == "BaseDirect"
                 cc = loadHDF5("BRD_chargedata", "chargedata")   # (52704, 429)
-            elseif scenarioEV == "BaseMix"
-                cc = loadHDF5("BRD_chargedata", "chargedata")[1:52560, :]   # (52704, 429)
-                cc3 = CSV.read("$DATAFOLDER/EVcharging_percar_kWh$region.csv", DataFrame)[:, 2:end] |> Matrix
-                cc3 = repeat(cc3 / 6.9, inner=(6,1))      # normalize EV load to 1.0 (max charge power = 6.9 kW) and expand hourly data to 10 minute periods
-                cc[:, 3:3:426] .= cc3[:, 3:3:426]
             else
                 filename = (scenarioEV == "BaseSmart") ? "Optimal_EVcharging_percar_kWh" : "V2G_EVcharging_percar_kWh"
                 cc = CSV.read("$DATAFOLDER/$filename$region.csv", DataFrame) |> Matrix

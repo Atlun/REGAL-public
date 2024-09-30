@@ -1,18 +1,20 @@
-# REGAL (previous internal name: Gridmodel)
+# REGAL
 
 A model of the Swedish (residential) low-voltage power grid estimated using public datasets. The model first dimensions
 the grid based on historical demand and user-selected 10-minute full-year electricity demand profiles for houses and
 apartments, then adds additional demand profiles for electric vehicle charging based on user-selected coincidence
 matrices, and finally calculates resulting thermal, current and voltage violations for cables and transformers.
 
-## NOTE: data not uploaded yet!
+## Initial setup
 
-This repository contains all the code needed to process raw input data and run the model, but we have not yet uploaded the actual input data.
-The reason is that parts of the data were provided to us under confidentiality terms and we need to anonymize/randomize them before they can be shared.
-This work is underway, and will eventually result in a runnable model, although it won't exactly reproduce the results of our forthcoming paper.
-An open license will also be added at that point.
+To minimize run times, the model requires precalculated coincidence matrices based on random combinations of EV charging and household demand profiles. Choose one of the following two options, depending on whether you intend to run the full set of scenarios (BaseDirect, BaseSmart, BaseV2G) or just the BaseDirect scenario.
 
-The rest of this README provides brief instructions for running the model (again, once the data has been uploaded).
+```julia
+setup("full")    # To create data for the full set of scenarios (14 GB of free disk space required)
+setup("minimal") # Only creates data for the BaseDirect scenario (1.6 GB of free disk space required)
+```
+
+Also, to speed up repeated runs, the setup function will also combine open GIS data from multiple sources and save a single dataframe of geodata used in the model.
 
 ## Running: arguments and defaults
 
