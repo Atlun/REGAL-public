@@ -1,6 +1,6 @@
-name = "Gridmodel"
-uuid = "493f7f7c-85b0-4aed-ac6f-408781c47379"
-authors = ["Niclas Mattsson <niclas.mattsson@gmail.com>"]
+name = "REGALpublic"
+uuid = "b9cb0a82-3036-443d-8e36-11d2fbcc4328"
+authors = ["Therese Lundblad <therese.lundblad@chalmers.se>"]
 version = "0.1.0"
 
 [deps]

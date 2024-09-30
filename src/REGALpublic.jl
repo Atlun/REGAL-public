@@ -1,4 +1,4 @@
-module Gridmodel
+module REGALpublic
 
 using ProgressMeter, TimerOutputs, CSV, MAT
 
