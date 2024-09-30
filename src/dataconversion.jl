@@ -10,9 +10,9 @@ export readgeodata, savegeodata_DESO, write_cellcompanydata, loadHDF5, GDF, GFT,
 function getpop()
     # Geopackage of population in 1 km squares (114800 polygons of vector data):
     # https://www.scb.se/vara-tjanster/oppna-data/oppna-geodata/statistik-pa-rutor/
-    # gdf = GDF.read("C:/Griddata/TotRut_SweRef.gpkg")              # 534712 polygons and SWEREF99 cell ID ("Ruta")
-    # gdf = GDF.read("C:/Griddata/totalbefolkning_1km_221231.gpkg")   # 114800 polygons, SWEREF99 cell ID, cellsize (=1000), population
-    gdf = GDF.read("C:/Griddata/Totalbefolkning_1km_211231.gpkg")   # 114800 polygons, SWEREF99 cell ID, cellsize (=1000), population
+    # gdf = GDF.read("$DATAFOLDER/TotRut_SweRef.gpkg")              # 534712 polygons and SWEREF99 cell ID ("Ruta")
+    # gdf = GDF.read("$DATAFOLDER/totalbefolkning_1km_221231.gpkg")   # 114800 polygons, SWEREF99 cell ID, cellsize (=1000), population
+    gdf = GDF.read("$DATAFOLDER/Totalbefolkning_1km_211231.gpkg")   # 114800 polygons, SWEREF99 cell ID, cellsize (=1000), population
     select!(gdf, [:geom, :Ruta, :Pop])
     rename!(gdf, [:geometry, :cellid, :pop])
 
@@ -73,7 +73,7 @@ decode_coords(ruta::String) = (parse(Int, ruta[1:6]), parse(Int, ruta[7:end])) .
 function getdesoraster()
     # Geopackage of DeSO boundaries (vector data):
     # https://www.scb.se/vara-tjanster/oppna-data/oppna-geodata/deso--demografiska-statistikomraden/
-    dfdeso = GDF.read("C:/Griddata/DeSO_2018_v2.gpkg")
+    dfdeso = GDF.read("$DATAFOLDER/DeSO_2018_v2.gpkg")
     dfdeso.area_km2 = Rasters.GeoInterface.area.(dfdeso.geom) / 1e6
     swe = rasterizeSWEREF99(dfdeso, :geom)
     return swe, dfdeso
@@ -84,7 +84,7 @@ function getdesoraster()
 end
 
 function getcompanydata()
-    dfcompany = GDF.read("C:/Griddata/Elnätsområden Therese/omraden.shp")
+    dfcompany = GDF.read("$DATAFOLDER/Elnätsområden Therese/omraden.shp")
     dfcompany.bolag[276] = "Hedemorahyttorna"
     dfcompany.snitt = parse.(Int, dfcompany.snitt)
     disallowmissing!(dfcompany)
@@ -140,12 +140,12 @@ function save_intersection_matrix()
     areamat ./= sum(areamat, dims=2)    # normalize so cell row sum = 1 (ensures even border cells belong 100% to a DeSO)
     ii = findall(areamat .> 0)
     df = DataFrame(:row => getindex.(ii,1), :col => getindex.(ii,2), :val => areamat[ii])
-    CSV.write("C:/Griddata/intersectionmatrix.csv", df)
+    CSV.write("$DATAFOLDER/intersectionmatrix.csv", df)
 end
 
 "Read back the sparse matrix saved by `save_intersection_matrix`."
 function read_intersection_matrix(T=Float64)
-    df = CSV.read("C:/Griddata/intersectionmatrix.csv", DataFrame)
+    df = CSV.read("$DATAFOLDER/intersectionmatrix.csv", DataFrame)
     areamat = zeros(T, 114799, 5984)
     ii = CartesianIndex.(df.row, df.col)
     areamat[ii] .= df.val
@@ -157,7 +157,7 @@ end
 # centerpoint(geometry) = AG.createpoint(centercoords(geometry))
 # centerintersects(p1, p2) = GI.intersects(centerpoint(p1), p2)
 
-function write_cellcompanydata(outputdir="C:/Griddata/output")
+function write_cellcompanydata(outputdir="$DATAFOLDER/output")
     dfpop, dfdeso = merge_pop_coords_deso()
     println("Identifying power company for each cell...")
     dfcellcompany = getcellcompanydata(dfpop)
@@ -216,11 +216,11 @@ coordindex(x, xlim) = (x - xlim[1]) ÷ 1000 + 1
 function readdesostats(year=2021)
     yearstr = string(year)
     # https://www.scb.se/hitta-statistik/regional-statistik-och-kartor/regionala-indelningar/deso---demografiska-statistikomraden/deso-tabellerna-i-ssd--information-och-instruktioner/
-    cars0 = CSV.read("C:/Griddata/Personbilar 2015-2021.csv", DataFrame)
-    persons_per_house0 = CSV.read("C:/Griddata/Personer per hustyp 2018-2021.csv", DataFrame)
-    persons_per_contract0 = CSV.read("C:/Griddata/Personer per upplåtelseform 2018-2021.csv", DataFrame)
-    households0 = CSV.read("C:/Griddata/Antal hushåll 2018-2021.csv", DataFrame)
-    dwellings0 = CSV.read("C:/Griddata/Antal lägenheter 2018-2021.csv", DataFrame)
+    cars0 = CSV.read("$DATAFOLDER/Personbilar 2015-2021.csv", DataFrame)
+    persons_per_house0 = CSV.read("$DATAFOLDER/Personer per hustyp 2018-2021.csv", DataFrame)
+    persons_per_contract0 = CSV.read("$DATAFOLDER/Personer per upplåtelseform 2018-2021.csv", DataFrame)
+    households0 = CSV.read("$DATAFOLDER/Antal hushåll 2018-2021.csv", DataFrame)
+    dwellings0 = CSV.read("$DATAFOLDER/Antal lägenheter 2018-2021.csv", DataFrame)
 
     # number of cars per DeSO in traffic, not in traffic, and total
     cars = unstack(cars0[!, ["region", "status", yearstr]], :status, yearstr)
@@ -445,7 +445,7 @@ function savegeodata_DESO()
     insert_boreholes!(dfgeo)
     println("Inserting district heating data...")
     insert_district_heating_areas!(dfgeo)
-    CSV.write("C:/Griddata/geodata_DESO.csv", dfgeo)
+    CSV.write("$DATAFOLDER/geodata_DESO.csv", dfgeo)
 end
 
 function getverk()
@@ -454,7 +454,7 @@ function getverk()
     # https://www.scb.se/vara-tjanster/oppna-data/oppna-geodata/verksamhetsomraden/
     # ogrinfo WFS:"http://geodata.scb.se/geoserver/stat/ows?service=WFS&version=1.0.0&request=GetFeature&typeName=stat%3AVerksamhetsomraden.2015&outputFormat=SHAPE-ZIP&format_options=charset:UTF-8"
     # ogr2ogr -f "ESRI Shapefile" -lco ENCODING=UTF-8 Verksamhetsomraden.shp WFS:"http://geodata.scb.se/geoserver/stat/ows?service=WFS&version=1.0.0&request=GetFeature&typeName=stat%3AVerksamhetsomraden.2015&outputFormat=SHAPE-ZIP&format_options=charset:UTF-8"
-    df = Shapefile.Table("C:/Griddata/Verksamhetsomraden.shp") |> DataFrame
+    df = Shapefile.Table("$DATAFOLDER/Verksamhetsomraden.shp") |> DataFrame
 end
 
 # Geodataportalen
@@ -549,7 +549,7 @@ function readgeodata(selectcells::String, gridarea="", use_commercial=false)
     end
 
     println("    loading cell geodata$text...")
-    df = CSV.read("C:/Griddata/geodata_DESO.csv", DataFrame)
+    df = CSV.read("$DATAFOLDER/geodata_DESO.csv", DataFrame)
     
     if selectcells == "all"
         lowerpop, upperpop = 1, Inf
@@ -585,10 +585,10 @@ function insertcoords!(df)
     return df
 end
 
-"loadHDF5(filename, varnames...): Reads variables [varname1, varname2, ...] of the HDF5 file C:/Griddata/[filename].h5."
+"loadHDF5(filename, varnames...): Reads variables [varname1, varname2, ...] of the HDF5 file $DATAFOLDER/[filename].h5."
 function loadHDF5(filename, varnames...)
     prefixedvarnames = Tuple("/$x" for x in varnames)
-    h5open("C:/Griddata/$filename.h5", "r") do file
+    h5open("$DATAFOLDER/$filename.h5", "r") do file
         read(file, prefixedvarnames...)
     end
 end
@@ -605,7 +605,7 @@ end
 function convert_coincidences()
     folder = "D:/Marre/Filer_coincidence_till_niclas"
     dir = readdir(folder)
-    targetfolder = "C:/Griddata"
+    targetfolder = "$DATAFOLDER"
     for (i, matfile) in enumerate(dir)
         println("Reading $matfile (file $i of $(length(dir)))...")
         @time x = loadMAT("$folder/$matfile")
@@ -651,19 +651,19 @@ function loadMAT(filename, varname="coincidence")
 end
 
 function saveMAT_compressed(x, filename="coincidence_compressed", varname="coincidence")
-    matopen("C:/Griddata/$filename.mat", "w"; compress=true) do file
+    matopen("$DATAFOLDER/$filename.mat", "w"; compress=true) do file
         write(file, varname, x)
     end
 end
 
 function saveMAT_float32(x)
-    matopen("C:/Griddata/coincidence_float32.mat", "w"; compress=true) do file
+    matopen("$DATAFOLDER/coincidence_float32.mat", "w"; compress=true) do file
         write(file, "coincidence", Float32.(x))
     end
 end
 
 function saveHDF5_c4(x, filename="coincidence_c4", varname="coincidence")
-    h5open("C:/Griddata/$filename.h5", "w") do file
+    h5open("$DATAFOLDER/$filename.h5", "w") do file
         file["/$varname", compress=4] = x
         # file["/coincidence", shuffle=(), deflate=3] = x
         # g = create_group(file, "mygroup")
@@ -672,7 +672,7 @@ function saveHDF5_c4(x, filename="coincidence_c4", varname="coincidence")
     end
 end
 
-# b = matread("C:/Griddata/BRDChargingAnnualHomeED17CR69100kWh.mat")["BRDChargingAnnualHomeED17CR69"]
+# b = matread("$DATAFOLDER/BRDChargingAnnualHomeED17CR69100kWh.mat")["BRDChargingAnnualHomeED17CR69"]
 # @time saveHDF5(Float32.(b), "BRD_chargedata", "chargedata");
 
 function EV_coincidence_maker()
@@ -707,21 +707,21 @@ function save_profile_aggregations(scenarios=["BaseDirect", "BaseSmart", "BaseV2
                 cc = loadHDF5("BRD_chargedata", "chargedata")   # (52704, 429)
             elseif scenarioEV == "BaseMix"
                 cc = loadHDF5("BRD_chargedata", "chargedata")[1:52560, :]   # (52704, 429)
-                cc3 = CSV.read("C:/Griddata/EVcharging_percar_kWh$region.csv", DataFrame)[:, 2:end] |> Matrix
+                cc3 = CSV.read("$DATAFOLDER/EVcharging_percar_kWh$region.csv", DataFrame)[:, 2:end] |> Matrix
                 cc3 = repeat(cc3 / 6.9, inner=(6,1))      # normalize EV load to 1.0 (max charge power = 6.9 kW) and expand hourly data to 10 minute periods
                 cc[:, 3:3:426] .= cc3[:, 3:3:426]
             else
                 filename = (scenarioEV == "BaseSmart") ? "Optimal_EVcharging_percar_kWh" : "V2G_EVcharging_percar_kWh"
-                cc = CSV.read("C:/Griddata/$filename$region.csv", DataFrame) |> Matrix
+                cc = CSV.read("$DATAFOLDER/$filename$region.csv", DataFrame) |> Matrix
                 cc = repeat(cc / 6.9, inner=(6,1))      # normalize EV load to 1.0 (max charge power = 6.9 kW) and expand hourly data to 10 minute periods 
             end
 
-            hh, ap = loadHDF5("residentialdemand", "HHLoadProfile", "APTLoadProfile")
+            hh, ap = loadHDF5("residentialdemand_randomized", "HHLoadProfile", "APTLoadProfile")
             DemandHH = add_shifted_profiles(hh; periods=12, weeks=1)    # makes 20*(2*12+1)*3 = 1500 profiles > max 1120 CustomersPerTransformer
             DemandAP = add_shifted_profiles(ap; periods=12, weeks=1)    # makes 15*(2*12+1)*3 = 1125 profiles > max 1120 CustomersPerTransformer
             DemandEV = add_shifted_profiles(cc; periods=0, weeks=1)     # makes 426*3 = 1278 profiles > max 962 carsperHH*CustomersPerTransformer
 
-            h5open("C:/Griddata/profile_coincidences_$scenarioEV$region.h5", "w") do file
+            h5open("$DATAFOLDER/profile_coincidences_$scenarioEV$region.h5", "w") do file
                 println("$scenarioEV $region profilesHH...")
                 @time x = randomize_profile_aggregations(DemandHH, profilenumbers, n; seed=23)
                 file["/profilesHH", chunk=HDF5.heuristic_chunk(x), filters=ZstdFilter()] = x    # total load

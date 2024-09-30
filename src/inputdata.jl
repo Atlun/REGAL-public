@@ -2,7 +2,7 @@ using Shapefile, DataFrames, HDF5, H5Zzstd, Statistics, Dates
 
 export readdatasets, getparams
 
-"""readdatasets(selectcells="all"): Read large input datasets from C:/Griddata folder to a NamedTuple."""
+"""readdatasets(selectcells="all"): Read large input datasets from $DATAFOLDER folder to a NamedTuple."""
 function readdatasets(selectcells="all", coincidencesuffix="", gridarea="", use_commercial=false)
     dfgeo = readgeodata(selectcells, gridarea, use_commercial)
     
