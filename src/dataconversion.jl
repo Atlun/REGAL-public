@@ -3,6 +3,7 @@ import GeoDataFrames as GDF
 import GeoFormatTypes as GFT
 GI = Shapefile.GeoInterface
 AG = ArchGDAL
+DATAFOLDER = "$(@__DIR__)/../data"
 
 export readgeodata, setup, loadHDF5, GDF, GFT, GI, AG, CSV, Shapefile, Rasters, mean, openmap
 
